@@ -92,7 +92,15 @@ jobs:
         sudo apt-get update -qq > /dev/null 2>&1 || true
         sudo apt-get install -y util-linux > /dev/null 2>&1 || true
         command -v swapon > /dev/null || { echo "::warning::swapon not available, skipping swap setup"; free -h; exit 0; }
-        SIZE_GB=12
+        FREE_GB=$(df --output=avail -B1G / | awk 'NR==2{print $1+0}')
+        echo "Free disk before swap: ${FREE_GB}G"
+        if [ "$FREE_GB" -lt 25 ]; then
+          echo "::warning::Only ${FREE_GB}G free - skipping swapfile to preserve disk quota"
+          free -h
+          exit 0
+        fi
+        SIZE_GB=8
+        [ "$FREE_GB" -lt 60 ] && SIZE_GB=4
         SWAP_FILE=/swapfile
         NEEDED=$((SIZE_GB * 1024 * 1024 * 1024))
         EXISTING=0
@@ -101,7 +109,7 @@ jobs:
           echo "Swap file already at least ${SIZE_GB}G, just enabling it..."
           sudo swapon "$SWAP_FILE" 2>/dev/null || true
         else
-          echo "Creating ${SIZE_GB}G swapfile..."
+          echo "Creating ${SIZE_GB}G swapfile (removing the old one to reclaim quota)..."
           sudo swapoff "$SWAP_FILE" 2>/dev/null || true
           sudo rm -f "$SWAP_FILE"
           sudo fallocate -l ${SIZE_GB}G "$SWAP_FILE" 2>/dev/null || \
@@ -120,6 +128,25 @@ jobs:
             echo "CHECK_LEGACY_BRANCH=false" >> $GITHUB_ENV
         else
             echo "CHECK_LEGACY_BRANCH=true" >> $GITHUB_ENV
+        fi
+
+    - name: Check Disk Space for Sync
+      run: |
+        echo "=== Mounts ==="
+        df -h
+        echo "=== Quota (if configured) ==="
+        command -v quota >/dev/null 2>&1 && quota -s || echo "no per-user 'quota' tool available"
+        command -v repquota >/dev/null 2>&1 && sudo repquota -s / 2>/dev/null || true
+        WORK_GB=$(df --output=avail -B1G "${{ github.workspace }}" | awk 'NR==2{print $1+0}')
+        case "${{ inputs.MANIFEST_BRANCH }}" in
+          14.1|14|13|13.0|twrp-14.1|twrp-13) NEED=15 ;;
+          12.1|12|11|11.0|10|10.0|twrp-12.1|twrp-11) NEED=30 ;;
+          *) NEED=25 ;;
+        esac
+        echo "Free on workspace mount: ${WORK_GB}G | estimated need for branch ${{ inputs.MANIFEST_BRANCH }}: ~${NEED}G"
+        if [ "${WORK_GB:-0}" -lt "$NEED" ]; then
+          echo "::error::Not enough disk quota: only ${WORK_GB}G free, branch ${{ inputs.MANIFEST_BRANCH }} needs ~${NEED}G. Free disk on the VPS (delete old builds, shrink swapfile, raise quota) and re-run."
+          exit 1
         fi
 
     - name: Prepare the environment
