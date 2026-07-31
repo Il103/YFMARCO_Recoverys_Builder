@@ -146,7 +146,16 @@ jobs:
 
     - name: Initialize Repo
       run: |
-        mkdir android-recovery
+        echo "Disk before sync:"
+        df -h | grep -E 'Filesystem|/$|/home' || df -h
+        echo "Removing leftover builds from previous runs..."
+        sudo rm -rf android-recovery 2>/dev/null || true
+        echo "Tuning git for big AOSP syncs..."
+        git config --global http.postBuffer 524288000
+        git config --global http.lowSpeedLimit 1000
+        git config --global http.lowSpeedTime 600
+        git config --global pack.threads 4
+        mkdir -p android-recovery
         cd android-recovery
         git config --global user.name "${{ github.actor }}"
         git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
@@ -155,7 +164,15 @@ jobs:
     - name: Repo Sync
       run: |
         cd android-recovery
-        repo sync -j$(nproc --all) --force-sync
+        for i in 1 2 3 4; do
+            echo "=== Sync attempt $i ==="
+            if repo sync -j8 --force-sync; then
+                echo "Sync succeeded on attempt $i"
+                break
+            fi
+            echo "::warning::Sync attempt $i failed - retrying (resumes from partial download)"
+        done
+        df -h | grep -E 'Filesystem|/$|/home' || df -h
 
     - name: Ensure Guava dependency exists
       if: inputs.MANIFEST_BRANCH == 'android-14.0'

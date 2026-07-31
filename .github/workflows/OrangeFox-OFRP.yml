@@ -135,22 +135,48 @@ jobs:
 
     - name: Set-up Manifest
       run: |
+        echo "Disk space before sync:"
+        df -h | grep -E 'Filesystem|/$|/home' || df -h
+        echo "Removing leftover builds from previous runs to free quota..."
+        sudo rm -rf ${GITHUB_WORKSPACE}/OrangeFox 2>/dev/null || true
+        sudo apt-get clean 2>/dev/null || true
         mkdir -p ${GITHUB_WORKSPACE}/OrangeFox
         cd ${GITHUB_WORKSPACE}/OrangeFox
         git config --global user.name "${{ github.actor }}"
         git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+        echo "Tuning git for big AOSP syncs..."
+        git config --global http.postBuffer 524288000
+        git config --global http.lowSpeedLimit 1000
+        git config --global http.lowSpeedTime 600
+        git config --global pack.threads 4
         git clone https://gitlab.com/OrangeFox/sync.git
         if [ ${{ inputs.MANIFEST_BRANCH }} == '11.0' ] || [ ${{ inputs.MANIFEST_BRANCH }} == '12.1' ] || [ ${{ inputs.MANIFEST_BRANCH }} == '14.1' ]; then
             echo "Sync fox_${{ inputs.MANIFEST_BRANCH }} branch"
             echo "CHECK_LEGACY_BRANCH=false" >> $GITHUB_ENV
             cd sync
-            ./orangefox_sync.sh --branch ${{ inputs.MANIFEST_BRANCH }} --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+            for i in 1 2 3 4; do
+                echo "=== Sync attempt $i (branch ${{ inputs.MANIFEST_BRANCH }}) ==="
+                if ./orangefox_sync.sh --branch ${{ inputs.MANIFEST_BRANCH }} --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}; then
+                    echo "Sync succeeded on attempt $i"
+                    break
+                fi
+                echo "::warning::Sync attempt $i failed - retrying (resumes from partial download)"
+                df -h | grep -E 'Filesystem|/$|/home' || df -h
+            done
         else
             echo "Sync legacy fox_${{ inputs.MANIFEST_BRANCH }} branch"
             echo "CHECK_LEGACY_BRANCH=true" >> $GITHUB_ENV
             cd sync/legacy
-            ./orangefox_sync_legacy.sh --branch ${{ inputs.MANIFEST_BRANCH }} --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+            for i in 1 2 3 4; do
+                echo "=== Legacy sync attempt $i (branch ${{ inputs.MANIFEST_BRANCH }}) ==="
+                if ./orangefox_sync_legacy.sh --branch ${{ inputs.MANIFEST_BRANCH }} --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}; then
+                    echo "Sync succeeded on attempt $i"
+                    break
+                fi
+                echo "::warning::Legacy sync attempt $i failed - retrying (resumes from partial download)"
+            done
         fi
+        df -h | grep -E 'Filesystem|/$|/home' || df -h
 
     - name: Ensure Guava dependency exists
       if: inputs.MANIFEST_BRANCH == '14.1'
