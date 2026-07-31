@@ -124,6 +124,15 @@ jobs:
         cd scripts
         sudo bash setup/android_build_env.sh
       
+    - name: Install Git-Repo
+      run: |
+        command -v repo >/dev/null 2>&1 && echo "repo already installed" && exit 0
+        mkdir -p ~/bin
+        curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o ~/bin/repo
+        chmod a+x ~/bin/repo
+        sudo ln -sf ~/bin/repo /usr/bin/repo
+        repo --version 2>/dev/null || echo "::warning::repo could not be installed"
+
     - name: Set-up Manifest
       run: |
         mkdir -p ${GITHUB_WORKSPACE}/OrangeFox
