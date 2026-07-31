@@ -82,8 +82,8 @@ jobs:
               
     - name: Clean-up (safe for self-hosted)
       run: |
-        echo "Freeing caches without touching runner packages..."
-        sudo rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+        echo "Freeing caches without touching runner packages or apt lists..."
+        sudo apt-get update -qq 2>/dev/null || true
         sudo apt-get clean 2>/dev/null || true
         sudo sync && sudo sysctl vm.drop_caches=3 2>/dev/null || true
         echo "Cleanup done"
@@ -91,6 +91,7 @@ jobs:
     - name: Swap Space
       run: |
         echo "Ensuring swap utilities are installed..."
+        sudo apt-get update -qq > /dev/null 2>&1 || true
         sudo apt-get install -y util-linux > /dev/null 2>&1 || true
         command -v swapon > /dev/null || { echo "::warning::swapon not available, skipping swap setup"; free -h; exit 0; }
         SIZE_GB=12
@@ -117,6 +118,7 @@ jobs:
       
     - name: Build Environment
       run: |
+        sudo apt-get update -qq
         sudo apt install aria2 -y
         git clone https://gitlab.com/OrangeFox/misc/scripts
         cd scripts
