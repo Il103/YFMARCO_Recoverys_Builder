@@ -51,7 +51,7 @@ env:
 jobs:
   build:
     name: Build PBRP by ${{ github.actor }}
-    runs-on: ubuntu-22.04
+    runs-on: self-hosted
     if: github.event.repository.owner.id == github.event.sender.id
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -61,6 +61,18 @@ jobs:
     - name: Check Out
       uses: actions/checkout@v5
 
+    - name: Self-hosted readiness check
+      run: |
+        echo "Running on: $(uname -a)"
+        echo "Cores: $(nproc) | RAM: $(free -h | awk '/^Mem:/{print $2}') | Disk free: $(df -h / | awk 'NR==2{print $4}')"
+        command -v sudo >/dev/null || { echo "::error::sudo is required on the self-hosted runner"; exit 1; }
+        DISK_FREE=$(df --output=avail / | tail -1 | tr -dc '0-9')
+        if [ -n "$DISK_FREE" ] && [ "$DISK_FREE" -lt 15728640 ]; then
+          echo "::warning::Low disk space on self-hosted runner - recovery sync+build needs ~20GB+"
+        fi
+        echo "SELF_HOSTED=1" >> $GITHUB_ENV
+        echo "Self-hosted runner OK"
+
     - name: Display Inputs
       run: |
         echo "Displaying variables/inputs."
@@ -69,8 +81,13 @@ jobs:
         echo "Device Branch: ${{ inputs.DEVICE_TREE_BRANCH }}"
         echo "Build Target: ${{ inputs.BUILD_TARGET }}"
 
-    - name: Cleanup
-      uses: rokibhasansagar/slimhub_actions@main
+    - name: Cleanup (safe for self-hosted)
+      run: |
+        echo "Freeing caches without touching runner packages..."
+        sudo rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+        sudo apt-get clean 2>/dev/null || true
+        sudo sync && sudo sysctl vm.drop_caches=3 2>/dev/null || true
+        echo "Cleanup done"
       
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
@@ -88,7 +105,7 @@ jobs:
     - name: Prepare the environment
       run: |
         sudo apt update
-        sudo apt -y upgrade
+        sudo apt -y upgrade || true
         sudo apt -y install gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib libc6-dev lib32ncurses5-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev libwxgtk3.0-gtk3-dev libxml2 lzop pngcrush schedtool squashfs-tools imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libtinfo5 libgflags-dev libncurses5 python3 curl repo git
 
     - name: Install OpenJDK
@@ -171,7 +188,11 @@ jobs:
     - name: Installing python2 for legacy builds
       if: env.CHECK_LEGACY_BRANCH == 'true'
       run: |
-        sudo apt-get install python2 python-is-python2
+        sudo apt-get install -y python2 python-is-python2 || \
+        sudo apt-get install -y python2.7 || \
+        ( wget -q "http://archive.ubuntu.com/ubuntu/pool/universe/p/python2/python2_2.7.18-3~20.04.3_amd64.deb" -O /tmp/python2.deb && sudo dpkg -i /tmp/python2.deb ) || \
+        true
+        command -v python2 || echo "::warning::python2 not found - legacy branch may fail to build"
 
     - name: Building PitchBlack
       run: |
