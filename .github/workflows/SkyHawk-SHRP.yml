@@ -87,9 +87,31 @@ jobs:
         echo "Cleanup done"
       
     - name: Set Swap Space
-      uses: pierotofy/set-swap-space@master
-      with:
-        swap-size-gb: 12
+      run: |
+        echo "Ensuring swap utilities are installed..."
+        sudo apt-get install -y util-linux > /dev/null 2>&1 || true
+        command -v swapon > /dev/null || { echo "::warning::swapon not available, skipping swap setup"; free -h; exit 0; }
+        SIZE_GB=12
+        SWAP_FILE=/swapfile
+        NEEDED=$((SIZE_GB * 1024 * 1024 * 1024))
+        EXISTING=0
+        if [ -f "$SWAP_FILE" ]; then EXISTING=$(stat -c%s "$SWAP_FILE" 2>/dev/null || echo 0); fi
+        if [ "$EXISTING" -ge "$NEEDED" ]; then
+          echo "Swap file already at least ${SIZE_GB}G, just enabling it..."
+          sudo swapon "$SWAP_FILE" 2>/dev/null || true
+        else
+          echo "Creating ${SIZE_GB}G swapfile..."
+          sudo swapoff "$SWAP_FILE" 2>/dev/null || true
+          sudo rm -f "$SWAP_FILE"
+          sudo fallocate -l ${SIZE_GB}G "$SWAP_FILE" 2>/dev/null || \
+            sudo dd if=/dev/zero of="$SWAP_FILE" bs=1M count=$((SIZE_GB * 1024)) status=none
+          sudo chmod 600 "$SWAP_FILE"
+          sudo mkswap "$SWAP_FILE" > /dev/null 2>&1
+          sudo swapon "$SWAP_FILE"
+        fi
+        echo "Swap status:"
+        free -h
+        swapon --show
 
     - name: Check Manifest Branch
       run: |
